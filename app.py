@@ -14,7 +14,7 @@ import uuid
 logging.getLogger("opentelemetry.context").setLevel(logging.CRITICAL)
 
 import chainlit as cl
-from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler # 별칭
 
 from agent import create_base_agent
 

@@ -1,3 +1,5 @@
+# 여기에 그래프 틀 작성
+
 """
 StateGraph 커스텀 워크플로우 — Level 3 (도전)
 
@@ -112,3 +114,52 @@ def create_graph_agent(model, tools, system_prompt: str = ""):
 #     graph.add_edge("chat", END)
 #
 #     return graph.compile(checkpointer=MemorySaver())
+
+def create_log_monitor_agent(model, tools, system_prompt: str = ""):
+    """로그 모니터링 전용 그래프: 로그 읽기 → 에러 분석 → 이메일 전송"""
+
+    tool_map = {t.name: t for t in tools}
+
+    # 노드 함수 정의
+    def read_log_node(state: AgentState) -> dict:
+        log_content = tool_map["read_log"].invoke({})
+        return {"messages": [AIMessage(content=f"로그 데이터:\n{log_content}")]}
+
+    def analyze_node(state: AgentState) -> dict:
+        messages = state["messages"]
+        if system_prompt:
+            messages = [SystemMessage(content=system_prompt)] + messages
+        messages = messages + [
+            SystemMessage(content=(
+                "위 로그에서 ERROR 레벨 로그만 추출하고, "
+                "긴급도(상/중/하)를 판단한 뒤 이메일 제목과 본문을 작성하세요. "
+                "반드시 send_email 도구를 호출하세요."
+            ))
+        ]
+        model_with_tools = model.bind_tools([tool_map["send_email"]])
+        response = model_with_tools.invoke(messages)
+        return {"messages": [response]}
+
+    def should_send(state: AgentState) -> Literal["send_email", "__end__"]:
+        last = state["messages"][-1]
+        if isinstance(last, AIMessage) and last.tool_calls:
+            return "send_email"
+        return END
+
+    email_node = ToolNode([tool_map["send_email"]], handle_tool_errors=True)
+
+    # StateGraph 생성 — AgentState를 상태 스키마로 사용
+    graph = StateGraph(AgentState)
+
+    # 노드 등록: 각 함수를 고유 이름의 노드로 등록합니다.
+    graph.add_node("read_log", read_log_node)
+    graph.add_node("analyze", analyze_node)
+    graph.add_node("send_email", email_node)
+
+    # 엣지 연결
+    graph.add_edge(START, "read_log")
+    graph.add_edge("read_log", "analyze")
+    graph.add_conditional_edges("analyze", should_send, ["send_email", END])
+    graph.add_edge("send_email", END)
+
+    return graph.compile(checkpointer=MemorySaver())
